@@ -18,6 +18,11 @@ CLI:
 - backup and restore run SQLite integrity and foreign-key checks;
 - restore never overwrites an existing target;
 - no command exposes arbitrary SQL, Python, shell, or model execution.
+- raw-message content and identity are immutable after ingestion;
+- proposal payload and parser provenance are immutable after creation;
+- confirmed/rejected inbox records are terminal;
+- every included parser result requires an explicit confirmation before posting;
+- a unique raw-message link prevents duplicate primary ledger transactions during retries.
 
 These controls establish the boundary future AI tools must use. An AI parser may propose an
 operation, but it receives no special authority to bypass domain validation.
@@ -49,7 +54,7 @@ security, and off-device backup protection remain deployment responsibilities.
 
 ## Future AI boundary
 
-Later model-powered components must follow least privilege:
+Model-powered components must follow least privilege:
 
 ```text
 natural-language input

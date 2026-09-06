@@ -126,6 +126,7 @@ class LedgerRepository:
         source: str,
         payee: str | None = None,
         raw_input: str | None = None,
+        raw_message_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         links: Iterable[tuple[str, str]] = (),
     ) -> str:
@@ -137,8 +138,8 @@ class LedgerRepository:
             """
             INSERT INTO transactions(
                 id, kind, amount_minor, currency, occurred_on, description, payee,
-                raw_input, actor, source, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                raw_input, raw_message_id, actor, source, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 transaction_id,
@@ -149,6 +150,7 @@ class LedgerRepository:
                 description,
                 payee,
                 raw_input,
+                raw_message_id,
                 actor,
                 source,
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
@@ -179,6 +181,7 @@ class LedgerRepository:
             "occurred_on": occurred_on,
             "description": description,
             "payee": payee,
+            "raw_message_id": raw_message_id,
             "postings": [
                 {"account_id": account.id, "account_name": account.name, "amount_minor": amount}
                 for account, amount, _ in posting_list
@@ -194,6 +197,16 @@ class LedgerRepository:
             after=snapshot,
         )
         return transaction_id
+
+    def get_transaction_by_raw_message(self, raw_message_id: str) -> Transaction | None:
+        row = self.connection.execute(
+            """
+            SELECT * FROM transactions
+            WHERE raw_message_id = ? AND status = 'posted'
+            """,
+            (raw_message_id,),
+        ).fetchone()
+        return _transaction(row) if row else None
 
     def get_transaction(self, transaction_id: str) -> Transaction:
         row = self.connection.execute(
@@ -325,6 +338,7 @@ def _transaction(
         payee=row["payee"],
         status=row["status"],
         raw_input=row["raw_input"],
+        raw_message_id=row["raw_message_id"],
         actor=row["actor"],
         source=row["source"],
         created_at=row["created_at"],

@@ -15,14 +15,17 @@ each version advances only after its core behavior works with real data.
 
 Exit gate: one user can safely keep a real ledger through the CLI and recover it from backup.
 
-## V0.2 — AI Bookkeeping
+## V0.2 — AI Bookkeeping Foundation (current)
 
-- raw inbox lifecycle;
-- model-provider interface and capability detection;
-- structured transaction proposals;
-- confidence thresholds and confirmation flow;
-- batch parsing and parser provenance;
-- deterministic fallback for simple inputs.
+- [x] raw inbox lifecycle;
+- [x] parser interface and deterministic baseline;
+- [x] structured transaction proposals;
+- [x] confidence and explicit confirmation flow;
+- [x] batch parsing and parser provenance;
+- [x] message and posting idempotency;
+- [ ] model-provider implementation and capability detection;
+- [ ] configurable auto-post threshold for proven high-confidence rules;
+- [ ] user-defined merchant/category rules.
 
 Exit gate: common natural-language records become correct ledger calls, while ambiguous input
 never silently becomes a fact.

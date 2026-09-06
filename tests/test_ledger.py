@@ -32,11 +32,11 @@ class LedgerTestCase(unittest.TestCase):
         return next(item.balance_minor for item in balances if item.account.name == name)
 
     def test_initialize_is_idempotent(self):
-        self.assertEqual(self.service.initialize(), 1)
-        self.assertEqual(self.service.initialize(), 1)
+        self.assertEqual(self.service.initialize(), 2)
+        self.assertEqual(self.service.initialize(), 2)
         connection = db.connect(self.database)
         try:
-            self.assertEqual(db.current_schema_version(connection), 1)
+            self.assertEqual(db.current_schema_version(connection), 2)
         finally:
             connection.close()
 

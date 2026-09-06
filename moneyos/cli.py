@@ -13,6 +13,7 @@ from typing import Sequence
 from . import __version__, db
 from .errors import MoneyOSError, ValidationError
 from .export import export_database
+from .inbox import InboxService
 from .money import format_minor_units, parse_minor_units
 from .service import LedgerService
 
@@ -116,6 +117,35 @@ def build_parser() -> argparse.ArgumentParser:
     export = subparsers.add_parser("export", help="export posted facts")
     export.add_argument("--format", choices=("json", "csv"), required=True)
     export.add_argument("--output", required=True)
+
+    inbox = subparsers.add_parser("inbox", help="ingest, parse, and review raw messages")
+    inbox_sub = inbox.add_subparsers(dest="inbox_command", required=True)
+    inbox_add = inbox_sub.add_parser("add", help="append a raw message to the inbox")
+    inbox_add.add_argument("content")
+    inbox_add.add_argument("--channel", default="cli")
+    inbox_add.add_argument("--external-id")
+    inbox_list = inbox_sub.add_parser("list", help="list raw messages")
+    inbox_list.add_argument("--status", choices=(
+        "pending", "proposed", "confirmed", "rejected", "failed"
+    ))
+    inbox_list.add_argument("--limit", type=int, default=100)
+    inbox_parse = inbox_sub.add_parser("parse", help="parse one message or a pending batch")
+    inbox_parse.add_argument("id", nargs="?")
+    inbox_parse.add_argument("--limit", type=int, default=50)
+    inbox_show = inbox_sub.add_parser("show", help="show a raw message and all proposals")
+    inbox_show.add_argument("id")
+    inbox_confirm = inbox_sub.add_parser("confirm", help="validate and post a proposal")
+    inbox_confirm.add_argument("id", help="proposal ID")
+    inbox_confirm.add_argument("--account")
+    inbox_confirm.add_argument("--category")
+    inbox_confirm.add_argument("--from", dest="from_account")
+    inbox_confirm.add_argument("--to", dest="to_account")
+    inbox_confirm.add_argument("--owed-by")
+    inbox_confirm.add_argument("--date")
+    inbox_confirm.add_argument("--description")
+    inbox_reject = inbox_sub.add_parser("reject", help="reject a proposal without posting")
+    inbox_reject.add_argument("id", help="proposal ID")
+    inbox_reject.add_argument("--reason", required=True)
 
     doctor = subparsers.add_parser("doctor", help="validate database integrity and invariants")
     doctor.add_argument("--json", action="store_true", dest="as_json")
@@ -284,6 +314,58 @@ def _dispatch(args: argparse.Namespace, service: LedgerService) -> int:
         print(f"Exported {args.format.upper()}: {output}")
         return 0
 
+    if args.command == "inbox":
+        inbox_service = InboxService(args.db)
+        if args.inbox_command == "add":
+            message, created = inbox_service.ingest(
+                args.content, channel=args.channel, external_id=args.external_id
+            )
+            verb = "Ingested" if created else "Already ingested"
+            print(f"{verb} raw message [{message.id}] status={message.status}")
+        elif args.inbox_command == "list":
+            _print_inbox_messages(
+                inbox_service.messages(status=args.status, limit=args.limit)
+            )
+        elif args.inbox_command == "parse":
+            if args.id:
+                proposal = inbox_service.parse_message(args.id)
+                _print_proposal(proposal)
+            else:
+                result = inbox_service.parse_pending(limit=args.limit)
+                for proposal in result.proposals:
+                    _print_proposal(proposal)
+                for message_id, error in result.failures:
+                    print(f"Failed {message_id}: {error}", file=sys.stderr)
+                print(
+                    f"Parsed {len(result.proposals)} message(s); "
+                    f"{len(result.failures)} failed"
+                )
+        elif args.inbox_command == "show":
+            message = inbox_service.message(args.id)
+            payload = {
+                "message": asdict(message),
+                "proposals": [
+                    asdict(item) for item in inbox_service.proposals_for_message(message.id)
+                ],
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        elif args.inbox_command == "confirm":
+            transaction_id = inbox_service.confirm(
+                args.id,
+                account=args.account,
+                category=args.category,
+                from_account=args.from_account,
+                to_account=args.to_account,
+                owed_by=args.owed_by,
+                occurred_on=args.date,
+                description=args.description,
+            )
+            print(f"Proposal confirmed; transaction posted: {transaction_id}")
+        else:
+            inbox_service.reject(args.id, reason=args.reason)
+            print(f"Proposal rejected: {args.id}")
+        return 0
+
     if args.command == "doctor":
         report = _doctor(args.db)
         if args.as_json:
@@ -296,6 +378,9 @@ def _dispatch(args: argparse.Namespace, service: LedgerService) -> int:
             print(f"Unbalanced: {report['unbalanced_transactions']}")
             print(f"Currency mismatches: {report['currency_mismatches']}")
             print(f"Invalid reversal markers: {report['invalid_reversal_markers']}")
+            print(f"Inbox messages: {report['inbox_messages']}")
+            print(f"Open proposals: {report['open_proposals']}")
+            print(f"Inbox inconsistencies: {report['inbox_inconsistencies']}")
             print("Integrity: OK")
         return 0
 
@@ -352,6 +437,29 @@ def _print_transaction(transaction) -> None:
     print(json.dumps(asdict(transaction), ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def _print_inbox_messages(messages) -> None:
+    if not messages:
+        print("No inbox messages.")
+        return
+    print(f"{'STATUS':<10} {'CHANNEL':<14} {'CONFIDENCE':<10} {'CONTENT':<40} ID")
+    for message in messages:
+        confidence = message.confidence or "-"
+        content = message.content.replace("\n", " ")[:40]
+        print(
+            f"{message.status:<10} {message.channel:<14} {confidence:<10} "
+            f"{content:<40} {message.id}"
+        )
+
+
+def _print_proposal(proposal) -> None:
+    missing = ",".join(proposal.missing_fields) or "none"
+    print(
+        f"Proposal {proposal.id}: kind={proposal.kind} "
+        f"confidence={proposal.confidence:.2f} missing={missing}"
+    )
+    print(json.dumps(proposal.payload, ensure_ascii=False, sort_keys=True))
+
+
 def _doctor(database: str | Path) -> dict[str, object]:
     db.check_integrity(database)
     connection = db.connect(database)
@@ -399,11 +507,45 @@ def _doctor(database: str | Path) -> dict[str, object]:
             raise ValidationError(
                 f"database contains {invalid_reversals} invalid reversal marker(s)"
             )
+        inbox_inconsistencies = connection.execute(
+            """
+            SELECT count(*) FROM (
+                SELECT m.id
+                FROM raw_messages m
+                WHERE m.status = 'proposed' AND NOT EXISTS (
+                    SELECT 1 FROM transaction_proposals p
+                    WHERE p.raw_message_id = m.id AND p.status = 'proposed'
+                )
+                UNION ALL
+                SELECT m.id
+                FROM raw_messages m
+                WHERE m.status = 'confirmed' AND NOT EXISTS (
+                    SELECT 1 FROM transaction_proposals p
+                    WHERE p.raw_message_id = m.id AND p.status = 'confirmed'
+                )
+                UNION ALL
+                SELECT m.id
+                FROM raw_messages m
+                WHERE m.status = 'rejected' AND NOT EXISTS (
+                    SELECT 1 FROM transaction_proposals p
+                    WHERE p.raw_message_id = m.id AND p.status = 'rejected'
+                )
+            )
+            """
+        ).fetchone()[0]
+        if inbox_inconsistencies:
+            raise ValidationError(
+                f"database contains {inbox_inconsistencies} inbox state inconsistency(ies)"
+            )
         posted = connection.execute(
             "SELECT count(*) FROM transactions WHERE status = 'posted'"
         ).fetchone()[0]
         drafts = connection.execute(
             "SELECT count(*) FROM transactions WHERE status = 'draft'"
+        ).fetchone()[0]
+        inbox_messages = connection.execute("SELECT count(*) FROM raw_messages").fetchone()[0]
+        open_proposals = connection.execute(
+            "SELECT count(*) FROM transaction_proposals WHERE status = 'proposed'"
         ).fetchone()[0]
         return {
             "database": str(Path(database)),
@@ -413,6 +555,9 @@ def _doctor(database: str | Path) -> dict[str, object]:
             "unbalanced_transactions": int(unbalanced),
             "currency_mismatches": int(currency_mismatches),
             "invalid_reversal_markers": int(invalid_reversals),
+            "inbox_messages": int(inbox_messages),
+            "open_proposals": int(open_proposals),
+            "inbox_inconsistencies": int(inbox_inconsistencies),
             "integrity": "ok",
         }
     finally:

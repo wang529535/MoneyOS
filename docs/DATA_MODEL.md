@@ -223,12 +223,16 @@ Every business mutation appends an audit record with:
 Audit records cannot be updated or deleted through the application database connection.
 Financial audit entries are evidence, not a second ledger: balances always come from postings.
 
-## 9. Raw messages
+## 9. Raw messages and proposals
 
-The schema reserves a `raw_messages` table for V0.2. It stores channel identity, external
-message identity, original content, receipt time, processing status, parser/model metadata,
-and confidence. A transaction may reference a raw message, but raw messages never become
-financial facts until a validated transaction is posted.
+V0.2 implements the previously reserved `raw_messages` table and adds versioned
+`transaction_proposals`. The inbox stores channel identity, external message identity,
+unaltered original content, receipt/processing state, parser/model metadata, confidence, and
+safe failure information. Proposals store immutable structured payloads and review decisions.
+
+A transaction may reference one raw message, and that link is unique for primary transactions.
+Raw messages and proposals never become financial facts until a validated operation is posted
+through `LedgerService`. See `INBOX.md` for the state machine and recovery protocol.
 
 ## 10. Database invariants
 

@@ -228,6 +228,106 @@ MIGRATIONS = (
         END;
         """,
     ),
+    Migration(
+        2,
+        "raw_inbox_and_proposals",
+        r"""
+        ALTER TABLE raw_messages ADD COLUMN processed_at TEXT;
+        ALTER TABLE raw_messages ADD COLUMN error_message TEXT;
+
+        CREATE TABLE transaction_proposals (
+            id TEXT PRIMARY KEY,
+            raw_message_id TEXT NOT NULL REFERENCES raw_messages(id) ON DELETE RESTRICT,
+            attempt INTEGER NOT NULL CHECK (attempt > 0),
+            kind TEXT NOT NULL CHECK (kind IN ('expense', 'income', 'transfer')),
+            payload_json TEXT NOT NULL,
+            confidence_ppm INTEGER NOT NULL CHECK (
+                confidence_ppm >= 0 AND confidence_ppm <= 1000000
+            ),
+            requires_confirmation INTEGER NOT NULL DEFAULT 1 CHECK (
+                requires_confirmation IN (0, 1)
+            ),
+            status TEXT NOT NULL DEFAULT 'proposed' CHECK (
+                status IN ('proposed', 'confirmed', 'rejected', 'superseded')
+            ),
+            parser_id TEXT NOT NULL,
+            parser_version TEXT NOT NULL,
+            model_id TEXT,
+            rationale TEXT,
+            missing_fields_json TEXT NOT NULL DEFAULT '[]',
+            transaction_id TEXT REFERENCES transactions(id) ON DELETE RESTRICT,
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            reviewer TEXT,
+            rejection_reason TEXT,
+            UNIQUE (raw_message_id, attempt)
+        );
+
+        CREATE UNIQUE INDEX idx_transactions_raw_message
+            ON transactions(raw_message_id) WHERE raw_message_id IS NOT NULL;
+        CREATE UNIQUE INDEX idx_proposals_one_active
+            ON transaction_proposals(raw_message_id) WHERE status = 'proposed';
+        CREATE INDEX idx_raw_messages_status_received
+            ON raw_messages(status, received_at, id);
+        CREATE INDEX idx_proposals_message_created
+            ON transaction_proposals(raw_message_id, created_at, id);
+
+        CREATE TRIGGER validate_proposal_resolution
+        BEFORE UPDATE OF status ON transaction_proposals
+        WHEN OLD.status = 'proposed' AND NEW.status IN ('confirmed', 'rejected')
+        BEGIN
+            SELECT CASE WHEN NEW.reviewed_at IS NULL OR NEW.reviewer IS NULL
+                THEN RAISE(ABORT, 'resolved proposal requires reviewer and review time') END;
+            SELECT CASE WHEN NEW.status = 'confirmed' AND NEW.transaction_id IS NULL
+                THEN RAISE(ABORT, 'confirmed proposal requires transaction') END;
+            SELECT CASE WHEN NEW.status = 'rejected' AND NEW.rejection_reason IS NULL
+                THEN RAISE(ABORT, 'rejected proposal requires reason') END;
+        END;
+
+        CREATE TRIGGER proposal_terminal_status_immutable
+        BEFORE UPDATE ON transaction_proposals
+        WHEN OLD.status IN ('confirmed', 'rejected', 'superseded')
+        BEGIN
+            SELECT RAISE(ABORT, 'resolved proposal is immutable');
+        END;
+
+        CREATE TRIGGER proposal_payload_immutable
+        BEFORE UPDATE OF
+            id, raw_message_id, attempt, kind, payload_json, confidence_ppm,
+            requires_confirmation, parser_id, parser_version, model_id,
+            rationale, missing_fields_json, created_at
+        ON transaction_proposals
+        BEGIN
+            SELECT RAISE(ABORT, 'proposal payload and provenance are immutable');
+        END;
+
+        CREATE TRIGGER proposal_delete_forbidden
+        BEFORE DELETE ON transaction_proposals
+        BEGIN
+            SELECT RAISE(ABORT, 'transaction proposals are append-only');
+        END;
+
+        CREATE TRIGGER raw_message_delete_forbidden
+        BEFORE DELETE ON raw_messages
+        BEGIN
+            SELECT RAISE(ABORT, 'raw messages are append-only');
+        END;
+
+
+        CREATE TRIGGER raw_message_content_immutable
+        BEFORE UPDATE OF id, channel, external_id, received_at, content ON raw_messages
+        BEGIN
+            SELECT RAISE(ABORT, 'raw message identity and content are immutable');
+        END;
+
+        CREATE TRIGGER raw_message_terminal_status_immutable
+        BEFORE UPDATE ON raw_messages
+        WHEN OLD.status IN ('confirmed', 'rejected')
+        BEGIN
+            SELECT RAISE(ABORT, 'resolved raw message is immutable');
+        END;
+        """,
+    ),
 )
 
 

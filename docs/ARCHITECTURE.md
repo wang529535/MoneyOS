@@ -1,6 +1,6 @@
 # MoneyOS V0.1 Architecture
 
-Status: accepted for the first implementation  
+Status: updated for V0.2
 Last updated: 2026-09-06
 
 ## 1. Objective
@@ -15,16 +15,23 @@ channel, analytics, and provider components.
 ## 2. Boundaries
 
 ```text
-CLI
- |
- v
-Application services  <-- future Tools / Channel adapters call here
- |
- v
-Ledger repository
- |
- v
-SQLite (transactions, postings, audit, migrations)
+CLI / future Channel Adapters
+              |
+              v
+       Raw Inbox Service
+              |
+      Transaction Parser --> structured proposal only
+              |
+       explicit review
+              |
+              v
+     Ledger Application Service  <-- only financial write authority
+              |
+              v
+       Ledger repository
+              |
+              v
+ SQLite (inbox, proposals, postings, audit, migrations)
 ```
 
 Rules:
@@ -49,6 +56,9 @@ moneyos/
   repository.py   SQL persistence and read models
   service.py      accounting workflows and validation
   export.py       read-only CSV/JSON exports
+  parser.py       replaceable parser protocol and deterministic baseline
+  inbox.py        ingestion, parsing, review, and recovery orchestration
+  inbox_repository.py  raw-message and proposal persistence
 tests/
 docs/
 ```
@@ -115,10 +125,11 @@ contexts rather than being silently treated as success.
 
 ## 8. Extension seams
 
-### AI bookkeeping (V0.2)
+### AI bookkeeping (V0.2 and later)
 
-An AI parser produces a proposed command DTO. Schema and business validation still happen in
-the application service. Low-confidence proposals stay in the raw inbox for confirmation.
+A parser produces a proposed command DTO. Schema and business validation still happen in the
+application service. V0.2 requires explicit confirmation for every included parser result.
+Future model-backed parsers implement the same protocol and record model provenance.
 
 ### Web and channels
 

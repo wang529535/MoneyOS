@@ -131,6 +131,7 @@ class LedgerService:
         description: str | None = None,
         payee: str | None = None,
         raw_input: str | None = None,
+        raw_message_id: str | None = None,
         actor: str = "user",
         source: str = "cli",
     ) -> str:
@@ -175,6 +176,7 @@ class LedgerService:
                     description=_description(description, f"{expense_category.name} expense"),
                     payee=_optional_text(payee, "payee", 200),
                     raw_input=_raw_input(raw_input),
+                    raw_message_id=raw_message_id,
                     metadata={"personal_amount_minor": personal, "owed_amount_minor": owed},
                     postings=postings,
                     actor=actor,
@@ -193,6 +195,7 @@ class LedgerService:
         description: str | None = None,
         payee: str | None = None,
         raw_input: str | None = None,
+        raw_message_id: str | None = None,
         actor: str = "user",
         source: str = "cli",
     ) -> str:
@@ -212,6 +215,7 @@ class LedgerService:
                     description=_description(description, f"{category_account.name} income"),
                     payee=_optional_text(payee, "payee", 200),
                     raw_input=_raw_input(raw_input),
+                    raw_message_id=raw_message_id,
                     postings=(
                         (target, amount_minor, "income received"),
                         (category_account, -amount_minor, "income recognized"),
@@ -231,6 +235,7 @@ class LedgerService:
         occurred_on: str | None = None,
         description: str | None = None,
         raw_input: str | None = None,
+        raw_message_id: str | None = None,
         actor: str = "user",
         source: str = "cli",
     ) -> str:
@@ -253,6 +258,7 @@ class LedgerService:
                         description, f"Transfer from {origin.name} to {target.name}"
                     ),
                     raw_input=_raw_input(raw_input),
+                    raw_message_id=raw_message_id,
                     postings=(
                         (origin, -amount_minor, "transfer out"),
                         (target, amount_minor, "transfer in"),
@@ -473,6 +479,13 @@ class LedgerService:
         connection = db.connect(self.database)
         try:
             return LedgerRepository(connection).get_transaction(transaction_id)
+        finally:
+            connection.close()
+
+    def transaction_for_raw_message(self, raw_message_id: str) -> Transaction | None:
+        connection = db.connect(self.database)
+        try:
+            return LedgerRepository(connection).get_transaction_by_raw_message(raw_message_id)
         finally:
             connection.close()
 

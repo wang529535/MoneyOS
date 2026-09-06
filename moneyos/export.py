@@ -47,6 +47,12 @@ def _export_json(database: str | Path, output: Path) -> None:
             "transaction_links": [dict(row) for row in connection.execute(
                 "SELECT * FROM transaction_links ORDER BY from_transaction_id, relation"
             )],
+            "raw_messages": [dict(row) for row in connection.execute(
+                "SELECT * FROM raw_messages ORDER BY received_at, id"
+            )],
+            "transaction_proposals": [dict(row) for row in connection.execute(
+                "SELECT * FROM transaction_proposals ORDER BY created_at, id"
+            )],
             "audit_log": [dict(row) for row in connection.execute(
                 "SELECT * FROM audit_log ORDER BY id"
             )],

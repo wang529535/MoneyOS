@@ -45,6 +45,7 @@ class Transaction:
     payee: str | None
     status: str
     raw_input: str | None
+    raw_message_id: str | None
     actor: str
     source: str
     created_at: str
@@ -52,3 +53,40 @@ class Transaction:
     related: tuple[dict[str, str], ...] = ()
     postings: tuple[Posting, ...] = ()
     metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class RawMessage:
+    id: str
+    channel: str
+    external_id: str | None
+    received_at: str
+    content: str
+    status: str
+    parser_version: str | None
+    model_id: str | None
+    confidence: str | None
+    processed_at: str | None
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class TransactionProposal:
+    id: str
+    raw_message_id: str
+    attempt: int
+    kind: str
+    payload: dict[str, Any]
+    confidence: float
+    requires_confirmation: bool
+    status: str
+    parser_id: str
+    parser_version: str
+    model_id: str | None
+    rationale: str | None
+    missing_fields: tuple[str, ...]
+    transaction_id: str | None
+    created_at: str
+    reviewed_at: str | None
+    reviewer: str | None
+    rejection_reason: str | None

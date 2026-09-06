@@ -12,6 +12,7 @@ from moneyos import db
 from moneyos.cli import main
 from moneyos.errors import ConflictError
 from moneyos.export import export_database
+from moneyos.inbox import InboxService
 from moneyos.service import LedgerService
 
 
@@ -56,7 +57,7 @@ class BackupExportCliTests(unittest.TestCase):
 
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["format"], "moneyos-ledger-export-v1")
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIn(self.transaction_id, {item["id"] for item in payload["transactions"]})
         self.assertTrue(payload["audit_log"])
 
@@ -163,6 +164,57 @@ class BackupExportCliTests(unittest.TestCase):
         output.write_text("occupied", encoding="utf-8")
         with self.assertRaises(ConflictError):
             export_database(self.database, output, format="json")
+
+    def test_cli_inbox_routes(self):
+        database = self.root / "inbox-cli.db"
+        service = LedgerService(database)
+        service.initialize()
+        service.create_account("WeChat", opening_minor=10_000)
+        service.create_category("Dining")
+        output = io.StringIO()
+        error = io.StringIO()
+
+        def run(*arguments: str) -> str:
+            output.seek(0)
+            output.truncate(0)
+            with redirect_stdout(output), redirect_stderr(error):
+                self.assertEqual(main(["--db", str(database), *arguments]), 0)
+            return output.getvalue()
+
+        self.assertIn(
+            "Ingested", run("inbox", "add", "麦当劳26", "--external-id", "cli-1")
+        )
+        self.assertIn(
+            "Already ingested",
+            run("inbox", "add", "麦当劳26", "--external-id", "cli-1"),
+        )
+        inbox = InboxService(database)
+        message = inbox.messages()[0]
+        self.assertIn("pending", run("inbox", "list", "--status", "pending"))
+        self.assertIn("Proposal", run("inbox", "parse", message.id))
+        proposal = inbox.proposals_for_message(message.id)[0]
+        self.assertIn(message.id, run("inbox", "show", message.id))
+        self.assertIn(
+            "transaction posted",
+            run(
+                "inbox", "confirm", proposal.id,
+                "--account", "WeChat", "--category", "Dining",
+            ),
+        )
+        self.assertIn("confirmed", run("inbox", "list", "--status", "confirmed"))
+
+        run("inbox", "add", "午饭10", "--external-id", "cli-2")
+        self.assertIn("Parsed 1 message", run("inbox", "parse"))
+        second = next(item for item in inbox.messages() if item.external_id == "cli-2")
+        second_proposal = inbox.proposals_for_message(second.id)[0]
+        self.assertIn(
+            "Proposal rejected",
+            run("inbox", "reject", second_proposal.id, "--reason", "not real"),
+        )
+
+        run("inbox", "add", "没有金额", "--external-id", "cli-3")
+        self.assertIn("1 failed", run("inbox", "parse"))
+        self.assertIn("Failed", error.getvalue())
 
 
 if __name__ == "__main__":

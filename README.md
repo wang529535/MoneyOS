@@ -3,8 +3,8 @@
 **Your finances. Your data. Your AI. Any hardware.**
 
 MoneyOS is an AI-native, local-first personal finance intelligence platform. The current
-V0.1 foundation is intentionally smaller: a reliable, auditable SQLite ledger that works
-without AI, a cloud account, or a network connection.
+V0.2 development version combines a reliable, auditable SQLite ledger with a raw inbox and
+reviewable transaction proposals. It works without a cloud account or network connection.
 
 > The ledger remembers what happened. The AI understands what it means.
 
@@ -26,10 +26,16 @@ implements the first delivery gate, not the entire long-term product.
 - validated SQLite backup and non-overwriting restore;
 - deterministic JSON and CSV exports;
 - database integrity diagnostics;
+- idempotent raw-message ingestion by channel and external message ID;
+- conservative parsing of simple Chinese expenses, income, transfers, and shared payments;
+- structured proposals with confidence, missing fields, parser version, and rationale;
+- explicit confirmation/rejection and recoverable batch processing;
 - zero runtime dependencies beyond Python 3.11+.
 
-V0.1 does **not** include an LLM, dashboard, bank synchronization, or message channel. Those
-features will sit above the ledger rather than owning financial truth.
+V0.2 does **not** yet bundle an LLM, dashboard, bank synchronization, or live message-channel
+adapter. The parser protocol is replaceable, but the included parser is a deterministic,
+fail-closed baseline. Future models will propose the same validated operations rather than
+owning financial truth.
 
 ## Quick start
 
@@ -44,6 +50,54 @@ python3 -m moneyos --db my-ledger.db expense \
 python3 -m moneyos --db my-ledger.db account balances
 python3 -m moneyos --db my-ledger.db category balances
 ```
+
+## Raw inbox workflow
+
+Add a message with an external ID supplied by its channel. Repeating the same channel and ID
+is idempotent:
+
+```bash
+python3 -m moneyos --db my-ledger.db inbox add "麦当劳26" \
+  --channel cli --external-id demo-001
+```
+
+The command prints a raw-message ID. Parse it into a reviewable proposal:
+
+```bash
+python3 -m moneyos --db my-ledger.db inbox parse RAW_MESSAGE_ID
+python3 -m moneyos --db my-ledger.db inbox show RAW_MESSAGE_ID
+```
+
+Simple messages contain an amount but intentionally do not guess the payment account or
+category. Supply those facts when confirming the proposal:
+
+```bash
+python3 -m moneyos --db my-ledger.db inbox confirm PROPOSAL_ID \
+  --account WeChat --category Dining
+```
+
+Other supported baseline patterns include:
+
+```text
+妈妈给了500
+从Bank转100到Cash
+和小李吃海底捞我先付238，他后来转我100
+```
+
+The shared-payment example posts CNY 138 as personal dining cost, CNY 100 as a receivable,
+then records the detected CNY 100 repayment. The original message is linked to the primary
+expense and confirmation is safe to retry.
+
+Parse all new pending messages or reject an incorrect proposal:
+
+```bash
+python3 -m moneyos --db my-ledger.db inbox parse --limit 50
+python3 -m moneyos --db my-ledger.db inbox reject PROPOSAL_ID --reason "not a transaction"
+python3 -m moneyos --db my-ledger.db inbox list --status failed
+```
+
+Failed messages are preserved and are not retried in every batch. After a parser or input
+issue is addressed, retry one explicitly with `inbox parse RAW_MESSAGE_ID`.
 
 Or install an editable development command without downloading dependencies:
 
@@ -170,11 +224,14 @@ python3 -m coverage report -m
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module boundaries, security, and extension
   seams;
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — testable gates from V0.1 through V1.0;
+- [`docs/INBOX.md`](docs/INBOX.md) — raw-message lifecycle, proposal contract, and safety;
 - [`docs/SECURITY.md`](docs/SECURITY.md) — current guarantees, limitations, and reporting;
 - [`docs/ADR/0001-balanced-postings.md`](docs/ADR/0001-balanced-postings.md) — why the ledger
   uses balanced postings;
 - [`docs/ADR/0002-standard-library-foundation.md`](docs/ADR/0002-standard-library-foundation.md) —
   why V0.1 has no runtime dependency.
+- [`docs/ADR/0003-separate-raw-messages-and-proposals.md`](docs/ADR/0003-separate-raw-messages-and-proposals.md)
+  — why parser output is not a ledger fact.
 
 ## Project principles
 
